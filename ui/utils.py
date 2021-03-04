@@ -56,5 +56,6 @@ def feedback_doc(question,is_correct_answer,document_id,model_id,is_correct_docu
          "answer": answer,
          "offset_start_in_doc": offset_start_in_doc
          }
+   print(req)
    response_raw = requests.post(url,json=req).json()
    return response_raw
