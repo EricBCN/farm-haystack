@@ -659,3 +659,35 @@ class JoinDocuments(BaseComponent):
             documents = documents[: self.top_k_join]
         output = {"query": inputs[0]["query"], "documents": documents, "labels": inputs[0].get("labels", None)}
         return output, "output_1"
+
+
+class Docs2Answers(BaseComponent):
+    outgoing_edges = 1
+
+    def __init__(self):
+        self.set_config()
+
+    def run(self, query, documents, **kwargs):
+        # conversion from Document -> Answer
+        answers = []
+        #TODO: check if this node also works for FAQ case
+        for doc in documents:
+            cur_answer = {
+                "query": None,
+                "answer": None,
+                "document_id": doc.id,
+                "context": doc.text,
+                "score": doc.score,
+                "probability": doc.probability,
+                "offset_start": None,
+                "offset_end": None,
+                "meta": doc.meta,
+            }
+
+            answers.append(cur_answer)
+
+        output = {"query": query, "answers": answers}
+        # Pass also the other incoming kwargs so that future nodes still have access to it
+        output.update(**kwargs)
+
+        return output, "output_1"
