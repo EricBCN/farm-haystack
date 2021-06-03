@@ -9,7 +9,7 @@ from haystack import Label
 from haystack.pipeline import Pipeline
 from haystack.eval import EvalDocuments
 
-# BC: This was last run using this commit (e0c824b0845d176df6f8527ce2ad0a3d9c159b77) 3/6/21
+# BC: This was last run using this commit (14f03237ed57204f66d2e58a1620fe2035fa4e86) 3/6/21
 
 data = Path("data/SubjQA/SubjQA")
 
