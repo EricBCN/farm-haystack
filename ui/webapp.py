@@ -19,6 +19,8 @@ def annotate_answer(answer, context):
     end_idx = start_idx + len(answer)
     annotated_text(context[:start_idx], (answer, "ANSWER", "#8ef"), context[end_idx:])
 
+def show_plain_documents(text):
+    st.markdown(text)
 
 def random_questions(df):
     random_row = df.sample(1)
@@ -113,13 +115,16 @@ if run_query:
         st.write("## Correct answers:")
         random_answer
 
-    st.write("## Retrieved answers:")
+    st.write("## Results:")
 
     # Make every button key unique
     count = 0
 
     for result in results:
-        annotate_answer(result["answer"], result["context"])
+        if result["answer"]:
+            annotate_answer(result["answer"], result["context"])
+        else:
+            show_plain_documents(result["context"], result["source"])
         "**Relevance:** ", result["relevance"], "**Source:** ", result["source"]
         if eval_mode:
             # Define columns for buttons

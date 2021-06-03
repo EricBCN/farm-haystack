@@ -21,7 +21,8 @@ def retrieve_doc(query, filters=None, top_k_reader=5, top_k_retriever=5):
     answers = response_raw["answers"]
     for i in range(len(answers)):
         answer = answers[i]["answer"]
-        if answer:
+        # Filter out "No answers"
+        if not (answers[i]["offset_start_in_doc"] == 0 and answers[i]["offset_start_in_doc"] == 0):
             context = "..." + answers[i]["context"] + "..."
             meta_name = answers[i]["meta"]["name"]
             relevance = round(answers[i]["probability"] * 100, 2)
