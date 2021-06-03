@@ -9,8 +9,9 @@ from haystack import Label
 from haystack.pipeline import Pipeline
 from haystack.eval import EvalDocuments
 
+# BC: This was last run using this commit (e0c824b0845d176df6f8527ce2ad0a3d9c159b77) 3/6/21
 
-data = Path("../data/SubjQA/SubjQA")
+data = Path("data/SubjQA/SubjQA")
 
 # Taken straight from book draft
 category = "electronics"
@@ -68,26 +69,27 @@ class EvalRetrieverPipeline:
 pipe = EvalRetrieverPipeline(es_retriever)
 
 labels = []
-# Get list of unique question IDs
-qids = dfs["test"]["q_review_id"].unique()
-for qid in qids:
-    # Collect all answers associated with a question ID
-    df = dfs["test"].query(f"q_review_id == '{qid}'")
-    # Iterate over each question-answer pair and add to labels
-    for _, row in df.iterrows():
-        # Unanswerable questions are empty strings in SQuAD format
-        answer = (row["human_ans_spans"] if row["human_ans_spans"] != "ANSWERNOTFOUND" else "")
-        label = Label(
-            question=row["question"],
-            answer=answer,
-            id=qid,
-            origin="SubjQA",
-            meta={"item_id": row["item_id"]},
-            is_correct_answer=True,
-            is_correct_document=True,
-            no_answer=True if answer == "" else False,
-        )
-        labels.append(label)
+
+
+# BC: You can create separate Label objects for each annotation (even if they are on the same question)
+# BC: They will be aggregated together by document_store.get_all_labels_aggregated()
+# BC: This removes the loop you had where you first iterated `for qid in qids`
+for i, row in dfs["test"].iterrows():
+    answer = (row["human_ans_spans"] if row["human_ans_spans"] != "ANSWERNOTFOUND" else "")
+    label = Label(
+        question=row["question"],
+        answer=answer,
+        id=i,                   # id here is the annotation id which needs to be unique otherwise it overwrites another label in the documentstore
+        origin="SubjQA",
+        meta={
+            "item_id": row["item_id"],
+            "question_id": row["q_review_id"]       # row["q_review_id"] used to be
+        },
+        is_correct_answer=True,
+        is_correct_document=True,
+        no_answer=True if answer == "" else False,
+    )
+    labels.append(label)
 
 # BC: You can use get_label_count instead of len(document_store.get_all_documents())
 document_store.write_labels(labels, index="label")
@@ -97,13 +99,15 @@ print(document_store.get_label_count(index="label"))
 # BC: This simplifies the loop that you had to get the labels
 labels_agg = document_store.get_all_labels_aggregated(
     index="label",
+    open_domain=True,
     aggregate_by_meta=["item_id"]
 )
 print("n_aggregated_labels")
 print(len(labels_agg))
 
 
-#BC: Is it right that we go from 358 labels (unaggregated) to 330?
+# BC: Note that the number of labels go from 358 to 330 after aggregation
+# BC: Note 330 is also the number we get when we run dfs["test"][["question", "item_id"]].drop_duplicates()
 
 
 #BC: no longer need to insert label objects into a dict, can get rid of the qid2label variable
