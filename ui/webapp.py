@@ -46,7 +46,8 @@ def random_questions(df):
 
 # Define state
 state_question = SessionState.get(
-    random_question=DEFAULT_QUESTION_AT_STARTUP, random_answer="", next_question="false", run_query="false"
+    random_question=DEFAULT_QUESTION_AT_STARTUP, random_answer="", next_question="false", run_query="false",
+    data_frame=pd.DataFrame({'Question': [""],'Answer 1': [""],'Answer 2': [""],'Answer 3': [""],'Answer 4': [""],})
 )
 
 # Initialize variables
@@ -61,6 +62,7 @@ top_k_reader = st.sidebar.slider("Max. number of answers", min_value=1, max_valu
 top_k_retriever = st.sidebar.slider(
     "Max. number of documents from retriever", min_value=1, max_value=10, value=3, step=1
 )
+eval_set_mode = st.sidebar.checkbox("Evaluation set creation")  
 eval_mode = st.sidebar.checkbox("Evaluation mode")
 debug = st.sidebar.checkbox("Show debug info")
 
@@ -106,6 +108,57 @@ if eval_mode:
     else:
         state_question.next_question = "false"
 
+# Create table for evaluation set
+#if eval_set_mode:
+# Intro to good questions
+st.write("How to create good questions for your evaluation set")
+good_question_expander = st.beta_expander("What is a good question?", expanded=False)
+with good_question_expander:
+    st.write('- A good question is a fact-seeking question that can be answered with an entity (person, organisation, location, etc.) or explanation. A bad question is ambiguous, incomprehensible, dependent on clear false presuppositions, opinion seeking, or not clearly a request for factual information.')
+    st.write('- The question should ask about information present in the text passage given. It should not be answerable only with additional knowledge or your interpretation.')
+    st.write('- Do not copy paste answer text into the question. Good questions do not contain the exact same words as the answer or the context around the answer. The question should be a reformulation with synonyms and in different order as the context of the answer.')
+    st.write('- Questions should be very precise natural questions you would ask when you want information from another person.')
+how_many_expander = st.beta_expander("How many questions should you ask per text passage?", expanded=False)
+with how_many_expander:
+    st.write('- Maximally ask 20 questions per passage.')
+    st.write('- Some text passages are not suited for 20 questions. Do not make up very constructed and complicated questions just to fill up the 20 - move on to the next text.')
+    st.write('- Try to ask questions covering the whole passage and focus on questions covering important information. Do not only ask questions about a single sentence in that passage')
+good_span_expander = st.beta_expander("What is a good answer span?", expanded=False)
+with good_span_expander:
+    st.write('- Always mark whole words. Do not start or end the answer within a word.')
+    st.write('- For short answers: The answer should be as short and as close to a spoken human answer as possible. Do not include punctuation.')
+    st.write('- For long answers: Please mark whole sentences with punctuation. The sentences can also pick up parts of the question, or mark even whole text passages. Mark passages only if they are not too large (e.g. not more than 8-10 sentences).')
+long_short_expander = st.beta_expander(" How do I differentiate long vs short answers?", expanded=False)
+with long_short_expander:
+    st.write('- If there is a short answer possible you should always select short answer over long answer.')
+    st.write('- Short precise answers like numbers or a few words are short answers.')
+    st.write('- Long answers include lists of possibilities or multiple sentences are needed to answer the question correctly.')
+multiple_answers_expander = st.beta_expander("How to handle multiple possible answers to a single question?", expanded=False)
+with multiple_answers_expander:
+    st.write('- As of now there is no functionality to mark multiple answers per single question.')
+    st.write('- Workaround: You can add a question with the same text but different answer selection by using the button below the question list (Button reads “custom question”).')
+grammatically_question_expander = st.beta_expander("What to do with grammatically wrong or incorrectly spelled questions?", expanded=False)
+with grammatically_question_expander:
+    st.write('- Include them. When users use the tool and ask questions they will likely contain grammar and spelling errors, too.')
+    st.write('- Exception: The question needs to be understandable without reading and interpretation of the corresponding text passage. If you do not understand the question, please mark the question as “I don’t understand the question”.')
+text_passage_expander = st.beta_expander("What to do with text passages that are not properly converted or contain (in part) information that cannot be labelled (e.g. just lists or garbage text)?", expanded=False)
+with text_passage_expander:
+    st.write('- Please do not annotate this text')
+    st.write('- You can write down what is missing, or the cause why you cannot label the text + the text number and title.')
+if (
+    state_question
+    and hasattr(state_question, "data_frame")
+):
+    df = state_question.data_frame
+else:
+    df = pd.DataFrame({
+        'Question': [],
+        'Answer 1': [],
+        'Answer 2': [],
+        'Answer 3': [],
+        'Answer 4': [],
+    })
+
 # Search bar
 question = st.text_input("Please provide your query:", value=random_question)
 if state_question and state_question.run_query:
@@ -124,6 +177,15 @@ if run_query:
         "Do you want to optimize speed or accuracy? \n"
         "Check out the docs: https://haystack.deepset.ai/docs/latest/optimizationmd "
     ):
+        df2 = pd.DataFrame({
+            'Question': [question],
+            'Answer 1': [""],
+            'Answer 2': [""],
+            'Answer 3': [""],
+            'Answer 4': [""],
+        })
+        df = df.append(df2, ignore_index=True)
+        state_question.data_frame = df
         results, raw_json = retrieve_doc(question, top_k_reader=top_k_reader, top_k_retriever=top_k_retriever)
 
     # Show if we use a question of the given set
@@ -171,3 +233,8 @@ if run_query:
     if debug:
         st.subheader("REST API JSON response")
         st.write(raw_json)
+remove_row = st.text_input("Remove row from table:", value="")
+remove_button = st.button("Remove")
+if remove_button:
+    df = df.drop([int(remove_row)], axis=0)
+st.table(df)
