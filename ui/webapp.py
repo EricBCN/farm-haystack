@@ -47,7 +47,7 @@ def random_questions(df):
 # Define state
 state_question = SessionState.get(
     random_question=DEFAULT_QUESTION_AT_STARTUP, random_answer="", next_question="false", run_query="false",
-    data_frame=pd.DataFrame({'Question': [""],'Answer1': [""],'Answer2': [""],'Answer3': [""],'Answer4': [""],}),
+    data_frame=pd.DataFrame({'Question': [DEFAULT_QUESTION_AT_STARTUP],'Answer1': [""],'Answer2': [""],'Answer3': [""],'Answer4': [""],'Add manually': ["https://annotate.deepset.ai/"]}),
     question_indices=0
 )
 
@@ -155,11 +155,12 @@ if eval_set_mode:
         question_indices = state_question.question_indices
     else:
         df = pd.DataFrame({
-            'Question': [],
-            'Answer1': [],
-            'Answer2': [],
-            'Answer3': [],
-            'Answer4': [],
+            'Question': [DEFAULT_QUESTION_AT_STARTUP],
+            'Answer1': [""],
+            'Answer2': [""],
+            'Answer3': [""],
+            'Answer4': [""],
+            'Add manually': ["https://annotate.deepset.ai/"],
         })
         question_indices = 0
 
@@ -189,6 +190,7 @@ if run_query:
                 'Answer2': [""],
                 'Answer3': [""],
                 'Answer4': [""],
+                'Add manually': ["https://annotate.deepset.ai/"],
             })
             df = df.append(df2, ignore_index=True)
             state_question.data_frame = df
@@ -223,13 +225,13 @@ if run_query:
                     )
                     st.success("Thanks for your feedback")
                 else:
-                    if df["Answer1"].values[question_indices] == ['']:
+                    if df["Answer1"].values[question_indices] == [""] or df["Answer1"].values[question_indices] == "":
                         df["Answer1"][question_indices] = result["answer"]
-                    elif df["Answer2"].values[question_indices] == ['']:
+                    elif df["Answer2"].values[question_indices] == [""] or df["Answer2"].values[question_indices] == "":
                         df["Answer2"][question_indices] = result["answer"]
-                    elif df["Answer3"].values[question_indices] == ['']:
+                    elif df["Answer3"].values[question_indices] == [""] or df["Answer3"].values[question_indices] == "":
                         df["Answer3"][question_indices] = result["answer"]
-                    elif df["Answer4"].values[question_indices] == ['']:
+                    elif df["Answer4"].values[question_indices] == [""] or df["Answer4"].values[question_indices] == "":
                         df["Answer4"][question_indices] = result["answer"]
             if button_col2.button("👎", key=(result["context"] + str(count))):
                 raw_json_feedback = feedback_doc(
@@ -254,9 +256,12 @@ if run_query:
         st.write(raw_json)
 
 if eval_set_mode:
-    remove_row = st.text_input("Remove row from table:", value="")
+    remove_row = st.number_input('Remove row from table', min_value=0, value=0, step=1)
     remove_button = st.button("Remove")
     if remove_button:
-        df = df.drop([int(remove_row)], axis=0)
+        df = df.drop(remove_row, axis=0)
         state_question.data_frame = df
     st.table(df)
+    export_csv_button = st.button("Export to csv")
+    if export_csv_button:
+        print(df.to_csv('eval_set.csv',index=False))

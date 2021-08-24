@@ -3,7 +3,7 @@ import os
 import requests
 import streamlit as st
 
-API_ENDPOINT = os.getenv("API_ENDPOINT", "http://localhost:8001")
+API_ENDPOINT = os.getenv("API_ENDPOINT", "http://localhost:8000")
 DOC_REQUEST = "query"
 DOC_FEEDBACK = "feedback"
 DOC_UPLOAD = "file-upload"
