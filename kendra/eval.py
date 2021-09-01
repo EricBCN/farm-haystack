@@ -9,7 +9,7 @@ INVALID_Q_STR = "INVALID QUESTION FOR KENDRA"
 
 label_dir = Path("../data/nq")
 pred_dir = Path(".")
-preds_haystack_filename = "predictions_haystack_dpr_7k.json"
+preds_haystack_filename = "predictions_haystack_dpr_efficient_qa.json"
 preds_kendra_filename = "predictions_kendra_300k.json"
 labels_filename = "nq_open_efficient_qa_test.jsonl"
 top_k_eval = 1
@@ -41,7 +41,10 @@ def reduce_labels(labels):
     ret = {}
     for l in labels:
         query = l["question"]
-        ret[query] = l["short_answers"]
+        try:
+            ret[query] = l["short_answers"]
+        except:
+            ret[query] = l["answer"]
     return ret
 
 def join_preds_labels(preds_haystack, preds_kendra, labels):
