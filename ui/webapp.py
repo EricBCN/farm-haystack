@@ -1,5 +1,7 @@
 import os
 import sys
+import time
+from datetime import timedelta
 
 import pandas as pd
 import streamlit as st
@@ -47,8 +49,9 @@ def random_questions(df):
 # Define state
 state_question = SessionState.get(
     random_question=DEFAULT_QUESTION_AT_STARTUP, random_answer="", next_question="false", run_query="false",
-    data_frame=pd.DataFrame({'Question': [DEFAULT_QUESTION_AT_STARTUP],'Answer1': [""],'Answer2': [""],'Answer3': [""],'Answer4': [""],'Add manually': ["https://annotate.deepset.ai/"]}),
-    question_indices=0
+    data_frame=pd.DataFrame({'Question': [DEFAULT_QUESTION_AT_STARTUP],'Answer1': [""],'Offset1': [""],'Answer2': [""],'Offset2': [""],'Answer3': [""],'Offset3': [""],'Answer4': [""],'Offset4': [""],'Time': [""],}),
+    question_indices=0,
+    start=0
 )
 
 # Initialize variables
@@ -113,36 +116,36 @@ if eval_mode:
 if eval_set_mode:
 # Intro to good questions
     st.write("How to create good questions for your evaluation set")
-    good_question_expander = st.beta_expander("What is a good question?", expanded=False)
+    good_question_expander = st.expander("What is a good question?", expanded=False)
     with good_question_expander:
         st.write('- A good question is a fact-seeking question that can be answered with an entity (person, organisation, location, etc.) or explanation. A bad question is ambiguous, incomprehensible, dependent on clear false presuppositions, opinion seeking, or not clearly a request for factual information.')
         st.write('- The question should ask about information present in the text passage given. It should not be answerable only with additional knowledge or your interpretation.')
         st.write('- Do not copy paste answer text into the question. Good questions do not contain the exact same words as the answer or the context around the answer. The question should be a reformulation with synonyms and in different order as the context of the answer.')
         st.write('- Questions should be very precise natural questions you would ask when you want information from another person.')
-    how_many_expander = st.beta_expander("How many questions should you ask per text passage?", expanded=False)
+    how_many_expander = st.expander("How many questions should you ask per text passage?", expanded=False)
     with how_many_expander:
         st.write('- Maximally ask 20 questions per passage.')
         st.write('- Some text passages are not suited for 20 questions. Do not make up very constructed and complicated questions just to fill up the 20 - move on to the next text.')
         st.write('- Try to ask questions covering the whole passage and focus on questions covering important information. Do not only ask questions about a single sentence in that passage')
-    good_span_expander = st.beta_expander("What is a good answer span?", expanded=False)
+    good_span_expander = st.expander("What is a good answer span?", expanded=False)
     with good_span_expander:
         st.write('- Always mark whole words. Do not start or end the answer within a word.')
         st.write('- For short answers: The answer should be as short and as close to a spoken human answer as possible. Do not include punctuation.')
         st.write('- For long answers: Please mark whole sentences with punctuation. The sentences can also pick up parts of the question, or mark even whole text passages. Mark passages only if they are not too large (e.g. not more than 8-10 sentences).')
-    long_short_expander = st.beta_expander(" How do I differentiate long vs short answers?", expanded=False)
+    long_short_expander = st.expander(" How do I differentiate long vs short answers?", expanded=False)
     with long_short_expander:
         st.write('- If there is a short answer possible you should always select short answer over long answer.')
         st.write('- Short precise answers like numbers or a few words are short answers.')
         st.write('- Long answers include lists of possibilities or multiple sentences are needed to answer the question correctly.')
-    multiple_answers_expander = st.beta_expander("How to handle multiple possible answers to a single question?", expanded=False)
+    multiple_answers_expander = st.expander("How to handle multiple possible answers to a single question?", expanded=False)
     with multiple_answers_expander:
         st.write('- As of now there is no functionality to mark multiple answers per single question.')
         st.write('- Workaround: You can add a question with the same text but different answer selection by using the button below the question list (Button reads “custom question”).')
-    grammatically_question_expander = st.beta_expander("What to do with grammatically wrong or incorrectly spelled questions?", expanded=False)
+    grammatically_question_expander = st.expander("What to do with grammatically wrong or incorrectly spelled questions?", expanded=False)
     with grammatically_question_expander:
         st.write('- Include them. When users use the tool and ask questions they will likely contain grammar and spelling errors, too.')
         st.write('- Exception: The question needs to be understandable without reading and interpretation of the corresponding text passage. If you do not understand the question, please mark the question as “I don’t understand the question”.')
-    text_passage_expander = st.beta_expander("What to do with text passages that are not properly converted or contain (in part) information that cannot be labelled (e.g. just lists or garbage text)?", expanded=False)
+    text_passage_expander = st.expander("What to do with text passages that are not properly converted or contain (in part) information that cannot be labelled (e.g. just lists or garbage text)?", expanded=False)
     with text_passage_expander:
         st.write('- Please do not annotate this text')
         st.write('- You can write down what is missing, or the cause why you cannot label the text + the text number and title.')
@@ -157,10 +160,14 @@ if eval_set_mode:
         df = pd.DataFrame({
             'Question': [DEFAULT_QUESTION_AT_STARTUP],
             'Answer1': [""],
+            'Offset1': [""],
             'Answer2': [""],
+            'Offset2': [""],
             'Answer3': [""],
+            'Offset3': [""],
             'Answer4': [""],
-            'Add manually': ["https://annotate.deepset.ai/"],
+            'Offset4': [""],
+            'Time': [""],
         })
         question_indices = 0
 
@@ -187,10 +194,14 @@ if run_query:
             df2 = pd.DataFrame({
                 'Question': [question],
                 'Answer1': [""],
+                'Offset1': [""],
                 'Answer2': [""],
+                'Offset2': [""],
                 'Answer3': [""],
+                'Offset3': [""],
                 'Answer4': [""],
-                'Add manually': ["https://annotate.deepset.ai/"],
+                'Offset4': [""],
+                'Time': [""],
             })
             df = df.append(df2, ignore_index=True)
             state_question.data_frame = df
@@ -217,8 +228,8 @@ if run_query:
         st.write("**Relevance:** ", result["relevance"], "**Source:** ", result["source"])
         if eval_mode or eval_set_mode:
             # Define columns for buttons
-            button_col1, button_col2, button_col3, button_col4 = st.beta_columns([1, 1, 1, 6])
-            if button_col1.button("👍", key=(result["context"] + str(count))):
+            button_col1, button_col2, button_col3, button_col4 = st.columns([1, 1, 1, 6])
+            if button_col1.button("👍", key=(result["context"] + str(count) + "1"), help="Correct answer"):
                 if eval_mode:
                     raw_json_feedback = feedback_doc(
                         question, "true", result["document_id"], 1, "true", result["answer"], result["offset_start_in_doc"]
@@ -227,13 +238,17 @@ if run_query:
                 else:
                     if df["Answer1"].values[question_indices] == [""] or df["Answer1"].values[question_indices] == "":
                         df["Answer1"][question_indices] = result["answer"]
+                        df["Offset1"][question_indices] = str(result["offset_start_in_doc"])
                     elif df["Answer2"].values[question_indices] == [""] or df["Answer2"].values[question_indices] == "":
                         df["Answer2"][question_indices] = result["answer"]
+                        df["Offset2"][question_indices] = str(result["offset_start_in_doc"])
                     elif df["Answer3"].values[question_indices] == [""] or df["Answer3"].values[question_indices] == "":
                         df["Answer3"][question_indices] = result["answer"]
+                        df["Offset3"][question_indices] = str(result["offset_start_in_doc"])
                     elif df["Answer4"].values[question_indices] == [""] or df["Answer4"].values[question_indices] == "":
                         df["Answer4"][question_indices] = result["answer"]
-            if button_col2.button("👎", key=(result["context"] + str(count))):
+                        df["Offset4"][question_indices] = str(result["offset_start_in_doc"])
+            if button_col2.button("👎", key=(result["context"] + str(count) + "2"), help="Wrong answer and wrong passage"):
                 raw_json_feedback = feedback_doc(
                     question,
                     "false",
@@ -244,7 +259,7 @@ if run_query:
                     result["offset_start_in_doc"],
                 )
                 st.success("Thanks for your feedback!")
-            if button_col3.button("👎👍", key=(result["context"] + str(count))):
+            if button_col3.button("👎👍", key=(result["context"] + str(count) + "3"), help="Wrong answer, but correct passage"):
                 raw_json_feedback = feedback_doc(
                     question, "false", result["document_id"], 1, "true", result["answer"], result["offset_start_in_doc"]
                 )
@@ -261,7 +276,39 @@ if eval_set_mode:
     if remove_button:
         df = df.drop(remove_row, axis=0)
         state_question.data_frame = df
+
     st.table(df)
+
+    #measure_start_button = st.button("Start measuring manual annotation")
+    #if (
+    #    state_question
+    #    and hasattr(state_question, "start")
+    #):
+    #    start = state_question.start
+    #else:
+    #    start = 0
+    #print(start)
+    #if measure_start_button:
+    #    start = time.time()
+    #    state_question.start = start
+    #measure_end_button = st.button("End measuring manual annotation")
+    #print(start)
+    #end = 0
+    #if measure_end_button:
+    #    end = time.time()
+    #    print(end)
+    #    print(str(timedelta(seconds=(end - start))))
+    #    df["Time"][question_indices] = str(timedelta(seconds=(end - start)))
+    #    start=0
+    #    state_question.start = start
+
     export_csv_button = st.button("Export to csv")
     if export_csv_button:
         print(df.to_csv('eval_set.csv',index=False))
+
+    user_input = st.text_area("Comments", "Add your comments")
+    export_comment_button = st.button("Export comments")
+    if export_comment_button:
+        f = open("comments.txt", "a")
+        f.write(user_input)
+        f.close()
