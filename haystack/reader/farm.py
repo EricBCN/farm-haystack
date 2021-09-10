@@ -39,7 +39,7 @@ class FARMReader(BaseReader):
         self,
         model_name_or_path: Union[str, Path],
         model_version: Optional[str] = None,
-        context_window_size: int = 150,
+        context_window_size: int = 500,
         batch_size: int = 50,
         use_gpu: bool = True,
         no_ans_boost: float = 0.0,
