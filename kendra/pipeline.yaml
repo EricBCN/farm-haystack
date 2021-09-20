@@ -1,0 +1,24 @@
+components:
+- name: Retriever
+  params:
+    document_store: MilvusDocumentStore
+    top_k: 5
+  type: DensePassageRetriever
+- name: MilvusDocumentStore
+  params: {}
+  type: MilvusDocumentStore
+- name: Reader
+  params:
+    model_name_or_path: ankur310794/roberta-base-squad2-nq
+  type: FARMReader
+pipelines:
+- name: query
+  nodes:
+  - inputs:
+    - Query
+    name: Retriever
+  - inputs:
+    - Retriever
+    name: Reader
+  type: Query
+version: '0.8'
