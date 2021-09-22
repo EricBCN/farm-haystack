@@ -16,7 +16,7 @@ class BasePipeline()
  | load_from_yaml(cls, path: Path, pipeline_name: Optional[str] = None, overwrite_with_env_variables: bool = True)
 ```
 
-Load Pipeline from a YAML file defining the individual components and how they're tied together to form
+Test Load Pipeline from a YAML file defining the individual components and how they're tied together to form
 a Pipeline. A single YAML can declare multiple Pipelines, in which case an explicit `pipeline_name` must
 be passed.
 
