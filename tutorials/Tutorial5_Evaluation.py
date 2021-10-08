@@ -1,3 +1,5 @@
+import pandas as pd
+
 from haystack.document_store.elasticsearch import ElasticsearchDocumentStore
 from haystack.preprocessor.utils import fetch_archive_from_http
 from haystack.retriever.sparse import ElasticsearchRetriever
@@ -7,11 +9,9 @@ from haystack.reader.farm import FARMReader
 from haystack.preprocessor import PreProcessor
 from haystack.utils import launch_es
 from haystack import Pipeline
-
 from haystack.modeling.utils import initialize_device_settings
-
 import logging
-
+import pickle
 logger = logging.getLogger(__name__)
 
 
@@ -98,16 +98,35 @@ def tutorial5_evaluation():
         num_processes=1,
     )
 
+
+    result_dic={}
     em = []
     f1 = []
     topn = []
+    annotations=[]
+    for num_qs in [40, 50, 60, 70, 90, 110, 130, 150, 200, 250, 300, 350]:
+        # muh=1
+        for i in range(20):
 
-    # for num_qs in [40,50,60,70,90,110,130,150,200,250,300,350]:
-    #     muh=1
-    for i in range(20):
-        reader_eval_results = reader.eval_on_file("../data/germanqa", "20210410_wiki_3wayeval.json", device=device, num_questions=50)
-        em.append(1)
+            reader_eval_results = reader.eval_on_file("../data/germanqa", "20210410_wiki_3wayeval.json", device=device, num_questions=num_qs)
 
+            em.append(reader_eval_results['EM'])
+            f1.append(reader_eval_results["f1"])
+            topn.append(reader_eval_results["top_n_accuracy"])
+            annotations.append(num_qs)
+
+    result_dic['em'] = em
+    result_dic['F1'] = f1
+    result_dic ['topn'] = topn
+    result_dic['annotations'] = annotations
+    df = pd.DataFrame (result_dic)
+
+    f= open('../data/result_dict.json', 'wb')
+    pickle.dump(result_dic, f)
+    f.close()
+
+    # plot = sns.lineplot(data=df, x="annotations", y="passengers")
+    # print(plot)
 
     #plot results
 

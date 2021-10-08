@@ -442,17 +442,19 @@ class SquadProcessor(Processor):
         sample_baskets = []
         indices = np.random.permutation(range(len(pre_baskets)))
         num_questions = 0
+        new_indices = []
         for i in indices:
             if num_questions < self.num_questions:
                 sample_baskets.append(pre_baskets[i])
                 num_questions += len(pre_baskets[i]["qas"])
+                new_indices.append(i)
 
         if num_questions > self.num_questions:
             additional = num_questions - self.num_questions
             for i in range(additional):
                 sample_baskets[-1]["qas"].pop()
         pre_baskets = sample_baskets
-
+        indices = new_indices
         # Tokenize documents and questions
         baskets = tokenize_batch_question_answering(pre_baskets, self.tokenizer, indices)
 
