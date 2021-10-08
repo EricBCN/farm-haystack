@@ -98,7 +98,7 @@ class Inferencer:
         self.return_class_probs = return_class_probs
 
         model.connect_heads_with_processor(processor.tasks, require_labels=False)
-        set_all_seeds(42)
+        #set_all_seeds(42)
 
         self._set_multiprocessing_pool(num_processes)
 

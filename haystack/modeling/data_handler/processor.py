@@ -366,6 +366,7 @@ class SquadProcessor(Processor):
         max_query_length: int = 64,
         proxies: Optional[dict] = None,
         max_answers: int = 6,
+        num_questions = 10,
         **kwargs
     ):
         """
@@ -401,6 +402,7 @@ class SquadProcessor(Processor):
         self.doc_stride = doc_stride
         self.max_query_length = max_query_length
         self.max_answers = max_answers
+        self.num_questions = num_questions
         super(SquadProcessor, self).__init__(
             tokenizer=tokenizer,
             max_seq_len=max_seq_len,
@@ -435,6 +437,21 @@ class SquadProcessor(Processor):
         """
         # Convert to standard format
         pre_baskets = [self.convert_qa_input_dict(x) for x in dicts] # TODO move to input object conversion
+
+
+        sample_baskets = []
+        indices = np.random.permutation(range(len(pre_baskets)))
+        num_questions = 0
+        for i in indices:
+            if num_questions < self.num_questions:
+                sample_baskets.append(pre_baskets[i])
+                num_questions += len(pre_baskets[i]["qas"])
+
+        if num_questions > self.num_questions:
+            additional = num_questions - self.num_questions
+            for i in range(additional):
+                sample_baskets[-1]["qas"].pop()
+        pre_baskets = sample_baskets
 
         # Tokenize documents and questions
         baskets = tokenize_batch_question_answering(pre_baskets, self.tokenizer, indices)

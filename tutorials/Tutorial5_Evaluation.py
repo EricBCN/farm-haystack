@@ -37,46 +37,46 @@ def tutorial5_evaluation():
     ##############################################
     # Code
     ##############################################
-    launch_es()
+    #launch_es()
     device, n_gpu = initialize_device_settings(use_cuda=True)
 
     # Download evaluation data, which is a subset of Natural Questions development set containing 50 documents
-    doc_dir = "../data/nq"
-    s3_url = "https://s3.eu-central-1.amazonaws.com/deepset.ai-farm-qa/datasets/nq_dev_subset_v2.json.zip"
-    fetch_archive_from_http(url=s3_url, output_dir=doc_dir)
-
-    # Connect to Elasticsearch
-    document_store = ElasticsearchDocumentStore(
-        host="localhost", username="", password="", index="document",
-        create_index=False, embedding_field="emb",
-        embedding_dim=768, excluded_meta_data=["emb"]
-    )
-
-    # Add evaluation data to Elasticsearch document store
-    # We first delete the custom tutorial indices to not have duplicate elements
-    # and also split our documents into shorter passages using the PreProcessor
-    preprocessor = PreProcessor(
-        split_by="word",
-        split_length=500,
-        split_overlap=0,
-        split_respect_sentence_boundary=False,
-        clean_empty_lines=False,
-        clean_whitespace=False
-    )
-    document_store.delete_documents(index=doc_index)
-    document_store.delete_documents(index=label_index)
-    document_store.add_eval_data(
-        filename="../data/nq/nq_dev_subset_v2.json",
-        doc_index=doc_index,
-        label_index=label_index,
-        preprocessor=preprocessor
-    )
-
-    # Let's prepare the labels that we need for the retriever and the reader
-    labels = document_store.get_all_labels_aggregated(index=label_index)
-
-    # Initialize Retriever
-    retriever = ElasticsearchRetriever(document_store=document_store)
+    # doc_dir = "../data/nq"
+    # s3_url = "https://s3.eu-central-1.amazonaws.com/deepset.ai-farm-qa/datasets/nq_dev_subset_v2.json.zip"
+    # fetch_archive_from_http(url=s3_url, output_dir=doc_dir)
+    #
+    # # Connect to Elasticsearch
+    # document_store = ElasticsearchDocumentStore(
+    #     host="localhost", username="", password="", index="document",
+    #     create_index=False, embedding_field="emb",
+    #     embedding_dim=768, excluded_meta_data=["emb"]
+    # )
+    #
+    # # Add evaluation data to Elasticsearch document store
+    # # We first delete the custom tutorial indices to not have duplicate elements
+    # # and also split our documents into shorter passages using the PreProcessor
+    # preprocessor = PreProcessor(
+    #     split_by="word",
+    #     split_length=500,
+    #     split_overlap=0,
+    #     split_respect_sentence_boundary=False,
+    #     clean_empty_lines=False,
+    #     clean_whitespace=False
+    # )
+    # document_store.delete_documents(index=doc_index)
+    # document_store.delete_documents(index=label_index)
+    # document_store.add_eval_data(
+    #     filename="../data/nq/nq_dev_subset_v2.json",
+    #     doc_index=doc_index,
+    #     label_index=label_index,
+    #     preprocessor=preprocessor
+    # )
+    #
+    # # Let's prepare the labels that we need for the retriever and the reader
+    # labels = document_store.get_all_labels_aggregated(index=label_index)
+    #
+    # # Initialize Retriever
+    # retriever = ElasticsearchRetriever(document_store=document_store)
 
     # Alternative: Evaluate DensePassageRetriever
     # Note, that DPR works best when you index short passages < 512 tokens as only those tokens will be used for the embedding.
@@ -94,67 +94,82 @@ def tutorial5_evaluation():
     reader = FARMReader(
         model_name_or_path="deepset/roberta-base-squad2",
         top_k=4,
-        return_no_answer=True
+        return_no_answer=True,
+        num_processes=1,
     )
 
-    # Here we initialize the nodes that perform evaluation
-    eval_retriever = EvalDocuments()
-    eval_reader = EvalAnswers(sas_model="sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
+    em = []
+    f1 = []
+    topn = []
+
+    # for num_qs in [40,50,60,70,90,110,130,150,200,250,300,350]:
+    #     muh=1
+    for i in range(20):
+        reader_eval_results = reader.eval_on_file("../data/germanqa", "20210410_wiki_3wayeval.json", device=device, num_questions=50)
+        em.append(1)
 
 
-    ## Evaluate Retriever on its own in closed domain fashion
-    if style == "retriever_closed":
-        retriever_eval_results = retriever.eval(top_k=10, label_index=label_index, doc_index=doc_index)
-        ## Retriever Recall is the proportion of questions for which the correct document containing the answer is
-        ## among the correct documents
-        print("Retriever Recall:", retriever_eval_results["recall"])
-        ## Retriever Mean Avg Precision rewards retrievers that give relevant documents a higher rank
-        print("Retriever Mean Avg Precision:", retriever_eval_results["map"])
-
-    # Evaluate Reader on its own in closed domain fashion (i.e. SQuAD style)
-    elif style == "reader_closed":
-        reader_eval_results = reader.eval(document_store=document_store, device=device, label_index=label_index, doc_index=doc_index)
-        # Evaluation of Reader can also be done directly on a SQuAD-formatted file without passing the data to Elasticsearch
-        #reader_eval_results = reader.eval_on_file("../data/nq", "nq_dev_subset_v2.json", device=device)
-
-        ## Reader Top-N-Accuracy is the proportion of predicted answers that match with their corresponding correct answer
-        print("Reader Top-N-Accuracy:", reader_eval_results["top_n_accuracy"])
-        ## Reader Exact Match is the proportion of questions where the predicted answer is exactly the same as the correct answer
-        print("Reader Exact Match:", reader_eval_results["EM"])
-        ## Reader F1-Score is the average overlap between the predicted answers and the correct answers
-        print("Reader F1-Score:", reader_eval_results["f1"])
+    #plot results
 
 
-    # Evaluate combination of Reader and Retriever in open domain fashion
-    elif style == "retriever_reader_open":
-
-        # Here is the pipeline definition
-        p = Pipeline()
-        p.add_node(component=retriever, name="ESRetriever", inputs=["Query"])
-        p.add_node(component=eval_retriever, name="EvalDocuments", inputs=["ESRetriever"])
-        p.add_node(component=reader, name="QAReader", inputs=["EvalDocuments"])
-        p.add_node(component=eval_reader, name="EvalAnswers", inputs=["QAReader"])
-        results = []
-
-        for l in labels:
-            res = p.run(
-                query=l.question,
-                labels=l,
-                params={"index": doc_index, "Retriever": {"top_k": 10}, "Reader": {"top_k": 5}},
-            )
-            results.append(res)
-
-        eval_retriever.print()
-        print()
-        retriever.print_time()
-        print()
-        eval_reader.print(mode="reader")
-        print()
-        reader.print_time()
-        print()
-        eval_reader.print(mode="pipeline")
-    else:
-        raise ValueError(f'style={style} is not a valid option. Choose from retriever_closed, reader_closed, retriever_reader_open')
+    # # Here we initialize the nodes that perform evaluation
+    # eval_retriever = EvalDocuments()
+    # eval_reader = EvalAnswers(sas_model="sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
+    #
+    #
+    # ## Evaluate Retriever on its own in closed domain fashion
+    # if style == "retriever_closed":
+    #     retriever_eval_results = retriever.eval(top_k=10, label_index=label_index, doc_index=doc_index)
+    #     ## Retriever Recall is the proportion of questions for which the correct document containing the answer is
+    #     ## among the correct documents
+    #     print("Retriever Recall:", retriever_eval_results["recall"])
+    #     ## Retriever Mean Avg Precision rewards retrievers that give relevant documents a higher rank
+    #     print("Retriever Mean Avg Precision:", retriever_eval_results["map"])
+    #
+    # # Evaluate Reader on its own in closed domain fashion (i.e. SQuAD style)
+    # elif style == "reader_closed":
+    #     reader_eval_results = reader.eval(document_store=document_store, device=device, label_index=label_index, doc_index=doc_index)
+    #     # Evaluation of Reader can also be done directly on a SQuAD-formatted file without passing the data to Elasticsearch
+    #     reader_eval_results = reader.eval_on_file("../data/nq", "nq_dev_subset_v2.json", device=device)
+    #
+    #     ## Reader Top-N-Accuracy is the proportion of predicted answers that match with their corresponding correct answer
+    #     print("Reader Top-N-Accuracy:", reader_eval_results["top_n_accuracy"])
+    #     ## Reader Exact Match is the proportion of questions where the predicted answer is exactly the same as the correct answer
+    #     print("Reader Exact Match:", reader_eval_results["EM"])
+    #     ## Reader F1-Score is the average overlap between the predicted answers and the correct answers
+    #     print("Reader F1-Score:", reader_eval_results["f1"])
+    #
+    #
+    # # Evaluate combination of Reader and Retriever in open domain fashion
+    # elif style == "retriever_reader_open":
+    #
+    #     # Here is the pipeline definition
+    #     p = Pipeline()
+    #     p.add_node(component=retriever, name="ESRetriever", inputs=["Query"])
+    #     p.add_node(component=eval_retriever, name="EvalDocuments", inputs=["ESRetriever"])
+    #     p.add_node(component=reader, name="QAReader", inputs=["EvalDocuments"])
+    #     p.add_node(component=eval_reader, name="EvalAnswers", inputs=["QAReader"])
+    #     results = []
+    #
+    #     for l in labels:
+    #         res = p.run(
+    #             query=l.question,
+    #             labels=l,
+    #             params={"index": doc_index, "Retriever": {"top_k": 10}, "Reader": {"top_k": 5}},
+    #         )
+    #         results.append(res)
+    #
+    #     eval_retriever.print()
+    #     print()
+    #     retriever.print_time()
+    #     print()
+    #     eval_reader.print(mode="reader")
+    #     print()
+    #     reader.print_time()
+    #     print()
+    #     eval_reader.print(mode="pipeline")
+    # else:
+    #     raise ValueError(f'style={style} is not a valid option. Choose from retriever_closed, reader_closed, retriever_reader_open')
 
 
 if __name__ == "__main__":
