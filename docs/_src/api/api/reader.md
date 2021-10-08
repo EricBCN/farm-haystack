@@ -219,7 +219,7 @@ Dict containing query and answers
 #### eval\_on\_file
 
 ```python
- | eval_on_file(data_dir: str, test_filename: str, device: Optional[str] = None)
+ | eval_on_file(data_dir: str, test_filename: str, device: Optional[str] = None, num_questions=50)
 ```
 
 Performs evaluation on a SQuAD-formatted file.
