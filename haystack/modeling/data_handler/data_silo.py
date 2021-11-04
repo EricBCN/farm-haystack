@@ -1,27 +1,25 @@
-from typing import Optional, List, Tuple, Dict, Union
-
 import hashlib
 import json
 import logging
 import random
 from contextlib import ExitStack
-from functools import partial
 from itertools import groupby
 from pathlib import Path
+from typing import Optional, List, Tuple, Dict, Union
+
 import numpy as np
-from tqdm import tqdm
 import torch
 import torch.multiprocessing as mp
-from torch.utils.data import ConcatDataset, Dataset
+from torch.utils.data import ConcatDataset, Dataset, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data.sampler import RandomSampler, SequentialSampler
+from tqdm import tqdm
 
 from haystack.modeling.data_handler.dataloader import NamedDataLoader
 from haystack.modeling.data_handler.processor import Processor
 from haystack.modeling.logger import MLFlowLogger as MlLogger
 from haystack.modeling.utils import log_ascii_workers, grouper, calc_chunksize
 from haystack.modeling.visual import TRACTOR_SMALL
-
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +91,7 @@ class DataSilo:
             # later or load from dicts instead of file
             self._load_data()
 
-    @classmethod
-    def _dataset_from_chunk(cls, chunk: List[Tuple[int, Dict]], processor: Processor):
+    def _dataset_from_chunk(self, chunk: List[Tuple[int, Dict]]):
         """
         Creating a dataset for a chunk (= subset) of dicts. In multiprocessing:
           * we read in all dicts from a file
@@ -104,12 +101,11 @@ class DataSilo:
           * all datasets get collected and concatenated
         :param chunk: Instead of only having a list of dicts here we also supply an index (ascending int) for each.
             => [(0, dict), (1, dict) ...]
-        :param processor: Haystack basics Processor (e.g. SquadProcessor)
         :return: PyTorch Dataset
         """
         dicts = [d[1] for d in chunk]
         indices = [x[0] for x in chunk]
-        dataset, tensor_names, problematic_sample_ids = processor.dataset_from_dicts(dicts=dicts, indices=indices)
+        dataset, tensor_names, problematic_sample_ids = self.processor.dataset_from_dicts(dicts=dicts, indices=indices)
         return dataset, tensor_names, problematic_sample_ids
 
     def _get_dataset(self, filename: Optional[Union[str, Path]], dicts: Optional[List[Dict]] = None):
@@ -143,7 +139,7 @@ class DataSilo:
                 log_ascii_workers(num_cpus_used, logger)
 
                 results = p.imap(
-                    partial(self._dataset_from_chunk, processor=self.processor),
+                    self._dataset_from_chunk,
                     grouper(dicts, multiprocessing_chunk_size),
                     chunksize=1,
                 )
@@ -153,7 +149,7 @@ class DataSilo:
                     f"dictionaries to pytorch datasets."
                 )
 
-                results = map(partial(self._dataset_from_chunk, processor=self.processor), grouper(dicts, num_dicts))  # type: ignore
+                results = map(self._dataset_from_chunk, grouper(dicts, num_dicts))  # type: ignore
 
             datasets = []
             problematic_ids_all = set()
@@ -722,3 +718,34 @@ def get_dict_checksum(payload_dict):
     """
     checksum = hashlib.md5(json.dumps(payload_dict, sort_keys=True).encode("utf-8")).hexdigest()
     return checksum
+
+
+class DistillingDataSilo(DataSilo):
+
+    def __init__(self, teacher_processor: Processor, **kwargs):
+        self.teacher_processor = teacher_processor
+        super().__init__(**kwargs)
+
+    def _dataset_from_chunk(self, chunk: List[Tuple[int, Dict]]):
+        """
+        Creating a dataset for a chunk (= subset) of dicts. In multiprocessing:
+          * we read in all dicts from a file
+          * split all dicts into chunks
+          * feed *one chunk* to *one process*
+          => the *one chunk*  gets converted to *one dataset* (that's what we do here)
+          * all datasets get collected and concatenated
+        :param chunk: Instead of only having a list of dicts here we also supply an index (ascending int) for each.
+            => [(0, dict), (1, dict) ...]
+        :return: PyTorch Dataset
+        """
+        dicts = [d[1] for d in chunk]
+        indices = [x[0] for x in chunk]
+        dataset, tensor_names, problematic_sample_ids = self.processor.dataset_from_dicts(dicts=dicts, indices=indices)
+        teacher_dataset, _, teacher_problematic_sample_ids = self.teacher_processor.dataset_from_dicts(dicts=dicts, indices=indices)
+        assert dataset.tensors[0].shape[0] == teacher_dataset.tensors[0].shape[0]
+        combined_dataset_tuple = dataset.tensors + teacher_dataset.tensors
+        combined_dataset = TensorDataset(*combined_dataset_tuple)
+        combined_tensor_names = tensor_names + [f"teacher_{name}" for name in tensor_names]
+        return combined_dataset, combined_tensor_names, problematic_sample_ids
+        # return dataset, tensor_names, problematic_sample_ids
+

@@ -1,4 +1,7 @@
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, TYPE_CHECKING
+if TYPE_CHECKING:
+    from haystack.nodes import FARMReader
+from copy import deepcopy
 
 import sys
 import shutil
@@ -8,6 +11,7 @@ import numpy
 import torch
 from tqdm import tqdm
 from pathlib import Path
+from torch.nn import MSELoss
 
 from haystack.modeling.data_handler.data_silo import DataSilo
 from haystack.modeling.evaluation.eval import Evaluator
@@ -272,9 +276,7 @@ class Trainer:
                 # Move batch of samples to device
                 batch = {key: batch[key].to(self.device) for key in batch}
                 # Forward & backward pass through model
-                logits = self.model.forward(**batch)
-                per_sample_loss = self.model.logits_to_loss(logits=logits, global_step=self.global_step, **batch)
-                loss = self.backward_propagate(per_sample_loss, step)
+                loss = self.compute_loss(batch, step)
 
                 # Perform  evaluation
                 if self.evaluate_every != 0 \
@@ -347,6 +349,11 @@ class Trainer:
                 evaluator_test.log_results(self.test_result, "Test", self.global_step)
         return self.model
 
+    def compute_loss(self, batch: dict, step: int) -> torch.Tensor:
+        logits = self.model.forward(**batch)
+        per_sample_loss = self.model.logits_to_loss(logits=logits, global_step=self.global_step, **batch)
+        return self.backward_propagate(per_sample_loss, step)
+
     def backward_propagate(self, loss: torch.Tensor, step: int):
         loss = self.adjust_loss(loss)
         if self.global_step % self.log_loss_every == 0 and self.local_rank in [-1, 0]:
@@ -417,7 +424,7 @@ class Trainer:
             logging.info(f"Resuming training from the train checkpoint at {checkpoint_to_load} ...")
         else:
             logging.info(f"No train checkpoints found. Starting a new training ...")
-            trainer = Trainer(data_silo=data_silo, model=model, optimizer=optimizer, local_rank=local_rank,
+            trainer = cls(data_silo=data_silo, model=model, optimizer=optimizer, local_rank=local_rank,
                               checkpoint_root_dir=checkpoint_root_dir, **kwargs)
         return trainer
 
@@ -596,3 +603,25 @@ class Trainer:
             return False
         else:
             return True
+
+class DistillingTrainer(Trainer):  # Find better names
+
+    def __init__(self, teacher_model: "FARMReader", student_loss_weight: float, **kwargs):
+        super().__init__(**kwargs)
+        self.teacher_model = teacher_model
+        self.teacher_model.eval()
+        # Make sure teacher model is on same device as student model
+        self.teacher_model.to(self.device)
+        self.student_loss_weight = student_loss_weight
+        self.logit_difference_loss_function = MSELoss()
+
+    def compute_loss(self, batch: dict, step: int) -> torch.Tensor:
+        student_batch = {key: value for key, value in batch.items() if not key.startswith("teacher_")}
+        teacher_batch = {key[8:]: value for key, value in batch.items() if key.startswith("teacher_")}
+        logits = self.model.forward(**student_batch)
+        teacher_logits = self.teacher_model.forward(**teacher_batch)
+        student_loss = self.model.logits_to_loss(logits=logits, global_step=self.global_step, **batch)
+        logit_difference_loss = self.logit_difference_loss_function(logits[0], teacher_logits[0])
+        combined_loss = logit_difference_loss * (1 - self.student_loss_weight) + student_loss * self.student_loss_weight
+        return self.backward_propagate(combined_loss, step)
+
