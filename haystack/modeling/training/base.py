@@ -11,7 +11,7 @@ import numpy
 import torch
 from tqdm import tqdm
 from pathlib import Path
-from torch.nn import MSELoss
+from torch.nn import KLDivLoss, MSELoss
 
 from haystack.modeling.data_handler.data_silo import DataSilo
 from haystack.modeling.evaluation.eval import Evaluator
@@ -606,14 +606,17 @@ class Trainer:
 
 class DistillingTrainer(Trainer):  # Find better names
 
-    def __init__(self, teacher_model: "FARMReader", student_loss_weight: float, **kwargs):
+    def __init__(self, teacher_model: "FARMReader", student_loss_weight: float, logit_loss: str = "kl_div", **kwargs):
         super().__init__(**kwargs)
         self.teacher_model = teacher_model
         self.teacher_model.eval()
         # Make sure teacher model is on same device as student model
         self.teacher_model.to(self.device)
         self.student_loss_weight = student_loss_weight
-        self.logit_difference_loss_function = MSELoss()
+        if logit_loss == "mse":
+            self.logit_difference_loss_function = MSELoss()
+        elif logit_loss == "kl_div":
+            self.logit_difference_loss_function = KLDivLoss()
 
     def compute_loss(self, batch: dict, step: int) -> torch.Tensor:
         student_batch = {key: value for key, value in batch.items() if not key.startswith("teacher_")}

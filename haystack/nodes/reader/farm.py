@@ -457,6 +457,7 @@ class FARMReader(BaseReader):
                     checkpoint_root_dir: Path = Path("model_checkpoints"),
                     checkpoint_every: Optional[int] = None,
                     checkpoints_to_keep: int = 3,
+                    logit_loss: str = "kl_div"
                     ) -> None:
         if not student_loss_weight or student_loss_weight > 1:  # FIXME: we should discuss whether this should allow zero
             raise ValueError("Student loss weight should be between 0 (excluded) and 1 (included)")
@@ -501,6 +502,7 @@ class FARMReader(BaseReader):
                        checkpoint, a subdirectory with the name epoch_{epoch_num}_step_{step_num} is created.
                 :param checkpoint_every: save a train checkpoint after this many steps of training.
                 :param checkpoints_to_keep: maximum number of train checkpoints to save.
+                :param logit_loss: Loss function to compute difference between student logits and teacher logits ("kl_div" or "mse")
                 :return: None
                 """
 
@@ -582,7 +584,8 @@ class FARMReader(BaseReader):
             checkpoint_every=checkpoint_every,
             checkpoints_to_keep=checkpoints_to_keep,
             teacher_model=teacher_model.inferencer.model,
-            student_loss_weight=student_loss_weight
+            student_loss_weight=student_loss_weight,
+            logit_loss=logit_loss
         )
 
         # 5. Let it grow!

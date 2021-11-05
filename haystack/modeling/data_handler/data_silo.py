@@ -747,5 +747,4 @@ class DistillingDataSilo(DataSilo):
         combined_dataset = TensorDataset(*combined_dataset_tuple)
         combined_tensor_names = tensor_names + [f"teacher_{name}" for name in tensor_names]
         return combined_dataset, combined_tensor_names, problematic_sample_ids
-        # return dataset, tensor_names, problematic_sample_ids
 
