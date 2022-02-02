@@ -54,7 +54,8 @@ class ElasticsearchDocumentStore(BaseDocumentStore):
         scroll: str = "1d",
         skip_missing_embeddings: bool = True,
         synonyms: Optional[List] = None,
-        synonym_type: str = "synonym"
+        synonym_type: str = "synonym",
+        use_exact_knn: bool = False,
     ):
         """
         A DocumentStore using Elasticsearch to store and query the documents for our search.
@@ -129,7 +130,8 @@ class ElasticsearchDocumentStore(BaseDocumentStore):
             ca_certs=ca_certs, verify_certs=verify_certs, create_index=create_index,
             duplicate_documents=duplicate_documents, refresh_type=refresh_type, similarity=similarity,
             timeout=timeout, return_embedding=return_embedding, index_type=index_type, scroll=scroll,
-            skip_missing_embeddings=skip_missing_embeddings, synonyms=synonyms,synonym_type=synonym_type
+            skip_missing_embeddings=skip_missing_embeddings, synonyms=synonyms,synonym_type=synonym_type,
+            use_exact_knn=use_exact_knn
         )
 
         self.client = self._init_elastic_client(host=host, port=port, username=username, password=password,
@@ -175,6 +177,7 @@ class ElasticsearchDocumentStore(BaseDocumentStore):
 
         self.duplicate_documents = duplicate_documents
         self.refresh_type = refresh_type
+        self.use_exact_knn = use_exact_knn
 
 
     def _init_elastic_client(self,
@@ -206,7 +209,7 @@ class ElasticsearchDocumentStore(BaseDocumentStore):
                 hosts=hosts, http_auth=aws4auth, connection_class=RequestsHttpConnection, use_ssl=True, verify_certs=True, timeout=timeout)
         elif username:
             # standard http_auth
-            client = Elasticsearch(hosts=hosts, http_auth=(username, password),
+            client = Elasticsearch(hosts=hosts, http_auth=(username, password), connection_class=RequestsHttpConnection,
                                         scheme=scheme, ca_certs=ca_certs, verify_certs=verify_certs,
                                         timeout=timeout)
         else:
@@ -1281,25 +1284,7 @@ class OpenSearchDocumentStore(ElasticsearchDocumentStore):
         if not self.embedding_field:
             raise RuntimeError("Please specify arg `embedding_field` in ElasticsearchDocumentStore()")
         else:
-            # +1 in similarity to avoid negative numbers (for cosine sim)
-            body = {
-                "size": top_k,
-                "query": self._get_vector_similarity_query(query_emb, top_k)
-            }
-            if filters:
-                filter_clause = []
-                for key, values in filters.items():
-                    if type(values) != list:
-                        raise ValueError(
-                            f'Wrong filter format for key "{key}": Please provide a list of allowed values for each key. '
-                            'Example: {"name": ["some", "more"], "category": ["only_one"]} ')
-                    filter_clause.append(
-                        {
-                            "terms": {key: values}
-                        }
-                    )
-                body["query"]["bool"]["filter"] = filter_clause         # type: ignore
-
+            body = self._get_vector_similarity_query(query_emb, top_k, filters=filters)
             excluded_meta_data: Optional[list] = None
 
             if self.excluded_meta_data:
@@ -1478,39 +1463,60 @@ class OpenSearchDocumentStore(ElasticsearchDocumentStore):
             if not self.client.indices.exists(index=index_name, headers=headers):
                 raise e
 
-    def _get_vector_similarity_query(self, query_emb: np.ndarray, top_k: int):
+    def _get_vector_similarity_query(self, query_emb: np.ndarray, top_k: int, filters: Optional[Dict[str, List[str]]] = None):
         """
         Generate Elasticsearch query for vector similarity.
-        """   
-        if self.embeddings_field_supports_similarity:
-            query: dict = {
-                    "bool": {
-                        "must": [
-                            {"knn": {self.embedding_field: {"vector": query_emb.tolist(), "k": top_k}}}
-                        ]
+        """
+        filter_clause = None   
+        if filters:
+            filter_clause = []
+            for key, values in filters.items():
+                if type(values) != list:
+                    raise ValueError(
+                        f'Wrong filter format for key "{key}": Please provide a list of allowed values for each key. '
+                        'Example: {"name": ["some", "more"], "category": ["only_one"]} ')
+                filter_clause.append(
+                    {
+                        "terms": {key: values}
                     }
-                }                           
+                )
+
+        if self.embeddings_field_supports_similarity and not self.use_exact_knn:
+            query: dict = {
+                    "size": top_k,
+                    "query": {
+                        "knn": {self.embedding_field: {"vector": query_emb.tolist(), "k": top_k}}
+                    }
+                }
+            if filter_clause is not None:
+                query["post_filter"] = {"bool": {"filter": filter_clause}}
+                # set k to maximum supported so we lose not too many by post filtering
+                query["query"]["knn"][self.embedding_field]["k"] = 10_000
         else:
             # if we do not have a proper similarity field we have to fall back to exact but slow vector similarity calculation
             query = {
-                "script_score": {
-                    "query": {"match_all": {}},
-                    "script": {
-                        "source": "knn_score", 
-                        "lang": "knn", 
-                        "params": {
-                            "field": self.embedding_field, 
-                            "query_value": query_emb.tolist(), 
-                            "space_type": self.similarity_to_space_type[self.similarity]
+                    "size": top_k,
+                    "query": {
+                        "script_score": {
+                            "query": {"match_all": {}} if filter_clause is None else {"bool": {"filter": filter_clause}},
+                            "script": {
+                                "source": "knn_score", 
+                                "lang": "knn", 
+                                "params": {
+                                    "field": self.embedding_field, 
+                                    "query_value": query_emb.tolist(), 
+                                    "space_type": self.similarity_to_space_type[self.similarity]
+                                    }
+                                }
                             }
                         }
                     }
-                }
+
         return query
 
     def _scale_embedding_score(self, score):
         # adjust approximate knn scores, see https://opensearch.org/docs/latest/search-plugins/knn/approximate-knn
-        if self.embeddings_field_supports_similarity:
+        if self.embeddings_field_supports_similarity and not self.use_exact_knn:
             if self.similarity == "dot_product":
                 if score > 1:
                     score = score - 1
