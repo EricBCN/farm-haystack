@@ -2,11 +2,14 @@ from typing import Dict, Union, Optional
 
 import json
 import logging
+import uuid
 
 from fastapi import APIRouter
 from haystack.schema import Label
 from rest_api.schema import FilterRequest, LabelSerialized, CreateLabelSerialized
-from rest_api.controller.search import DOCUMENT_STORE
+from rest_api.controller.search import DOCUMENT_STORE, PIPELINE, PIPELINE_B
+from starlette_context import plugins
+from starlette_context import context
 
 router = APIRouter()
 
@@ -27,8 +30,16 @@ def post_feedback(feedback: Union[LabelSerialized, CreateLabelSerialized]):
     if feedback.origin is None:
         feedback.origin = "user-feedback"
 
+    # select pipeline by correlation_id
+    correlation_id = context.get(plugins.CorrelationIdPlugin.key)
+    corr_id = uuid.UUID(correlation_id, version=4).int
+    if corr_id % 2 == 0:
+        pipeline = PIPELINE  
+    else:
+        pipeline = PIPELINE_B
+
     label = Label(**feedback.dict())
-    DOCUMENT_STORE.write_labels([label])
+    pipeline.get_document_store().write_labels([label])
 
 
 @router.get("/feedback")

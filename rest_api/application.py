@@ -10,6 +10,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.routing import APIRoute
 from fastapi.openapi.utils import get_openapi
 from starlette.middleware.cors import CORSMiddleware
+from starlette_context import plugins
+from starlette_context.middleware import ContextMiddleware
 
 from rest_api.controller.errors.http_error import http_error_handler
 from rest_api.config import ROOT_PATH
@@ -29,6 +31,7 @@ def get_application() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    application.add_middleware(ContextMiddleware, plugins=(plugins.RequestIdPlugin(),plugins.CorrelationIdPlugin()))
     application.add_exception_handler(HTTPException, http_error_handler)
     application.include_router(api_router)
 

@@ -3,6 +3,7 @@ from typing import Dict, Any
 import logging
 import time
 import json
+import uuid
 from pathlib import Path
 from numpy import ndarray
 
@@ -10,10 +11,12 @@ from fastapi import APIRouter
 
 import haystack
 from haystack.pipelines.base import Pipeline
-from rest_api.config import PIPELINE_YAML_PATH, QUERY_PIPELINE_NAME
+from rest_api.config import PIPELINE_B_YAML_PATH, PIPELINE_YAML_PATH, QUERY_PIPELINE_NAME
 from rest_api.config import LOG_LEVEL, CONCURRENT_REQUEST_PER_WORKER
 from rest_api.schema import QueryRequest, QueryResponse
 from rest_api.controller.utils import RequestLimiter
+from starlette_context import plugins
+from starlette_context import context
 
 
 logging.getLogger("haystack").setLevel(LOG_LEVEL)
@@ -27,6 +30,7 @@ router = APIRouter()
 
 
 PIPELINE = Pipeline.load_from_yaml(Path(PIPELINE_YAML_PATH), pipeline_name=QUERY_PIPELINE_NAME)
+PIPELINE_B = Pipeline.load_from_yaml(Path(PIPELINE_B_YAML_PATH), pipeline_name=QUERY_PIPELINE_NAME)
 DOCUMENT_STORE = PIPELINE.get_document_store()
 logging.info(f"Loaded pipeline nodes: {PIPELINE.graph.nodes.keys()}")
 
@@ -61,7 +65,21 @@ def query(request: QueryRequest):
     additional parameters that will be passed on to the Haystack pipeline.
     """
     with concurrency_limiter.run():
-        result = _process_request(PIPELINE, request)
+        # select pipeline by correlation_id
+        correlation_id = context.get(plugins.CorrelationIdPlugin.key)
+        corr_id = uuid.UUID(correlation_id, version=4).int
+        if corr_id % 2 == 0:
+            pipeline = PIPELINE  
+        else:
+            pipeline = PIPELINE_B
+
+        result = _process_request(pipeline, request)
+
+        if corr_id % 2 == 0:
+            result["query"] = "Answered by PIPELINE A: " + result["query"]
+        else:
+            result["query"] = "Answered by PIPELINE B: " + result["query"]
+
         return result
 
 
