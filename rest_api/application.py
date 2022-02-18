@@ -1,5 +1,7 @@
 import logging
 
+from rest_api.utils import SessionPlugin
+
 logging.basicConfig(format="%(asctime)s %(message)s", datefmt="%m/%d/%Y %I:%M:%S %p")
 logger = logging.getLogger(__name__)
 logging.getLogger("elasticsearch").setLevel(logging.WARNING)
@@ -31,7 +33,7 @@ def get_application() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    application.add_middleware(ContextMiddleware, plugins=(plugins.RequestIdPlugin(),plugins.CorrelationIdPlugin()))
+    application.add_middleware(ContextMiddleware, plugins=(plugins.RequestIdPlugin(),plugins.CorrelationIdPlugin(),SessionPlugin()))
     application.add_exception_handler(HTTPException, http_error_handler)
     application.include_router(api_router)
 

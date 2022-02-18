@@ -8,8 +8,9 @@ from fastapi import APIRouter
 from haystack.schema import Label
 from rest_api.schema import FilterRequest, LabelSerialized, CreateLabelSerialized
 from rest_api.controller.search import DOCUMENT_STORE, PIPELINE, PIPELINE_B
-from starlette_context import plugins
 from starlette_context import context
+
+from rest_api.utils import SessionPlugin
 
 router = APIRouter()
 
@@ -31,7 +32,7 @@ def post_feedback(feedback: Union[LabelSerialized, CreateLabelSerialized]):
         feedback.origin = "user-feedback"
 
     # select pipeline by correlation_id
-    correlation_id = context.get(plugins.CorrelationIdPlugin.key)
+    correlation_id = context.get(SessionPlugin.key)
     corr_id = uuid.UUID(correlation_id, version=4).int
     if corr_id % 2 == 0:
         pipeline = PIPELINE  

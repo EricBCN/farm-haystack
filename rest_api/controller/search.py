@@ -15,8 +15,9 @@ from rest_api.config import PIPELINE_B_YAML_PATH, PIPELINE_YAML_PATH, QUERY_PIPE
 from rest_api.config import LOG_LEVEL, CONCURRENT_REQUEST_PER_WORKER
 from rest_api.schema import QueryRequest, QueryResponse
 from rest_api.controller.utils import RequestLimiter
-from starlette_context import plugins
 from starlette_context import context
+
+from rest_api.utils import SessionPlugin
 
 
 logging.getLogger("haystack").setLevel(LOG_LEVEL)
@@ -66,7 +67,7 @@ def query(request: QueryRequest):
     """
     with concurrency_limiter.run():
         # select pipeline by correlation_id
-        correlation_id = context.get(plugins.CorrelationIdPlugin.key)
+        correlation_id = context.get(SessionPlugin.key)
         corr_id = uuid.UUID(correlation_id, version=4).int
         if corr_id % 2 == 0:
             pipeline = PIPELINE  
