@@ -325,7 +325,7 @@ class QuestionAnsweringHead(PredictionHead):
             # init empty head
             head = cls(layer_dims=[full_qa_model.config.hidden_size, 2], task_name="question_answering")
             # transfer weights for head from full model
-            #head.feed_forward.feed_forward[0].load_state_dict(full_qa_model.qa_outputs.state_dict())
+            # head.feed_forward.feed_forward[0].load_state_dict(full_qa_model.qa_outputs.state_dict())
             del full_qa_model
 
         return head
@@ -335,8 +335,8 @@ class QuestionAnsweringHead(PredictionHead):
         One forward pass through the prediction head model, starting with language model output on token level.
         """
         return X
-        #logits = self.feed_forward(X)
-        #return self.temperature_scale(logits)
+        # logits = self.feed_forward(X)
+        # return self.temperature_scale(logits)
 
     def logits_to_loss(self, logits: torch.Tensor, labels: torch.Tensor, **kwargs):
         """
@@ -352,7 +352,6 @@ class QuestionAnsweringHead(PredictionHead):
         # logits is of shape [batch_size, max_seq_len, 2]. Like above, the final dimension corresponds to [start, end]
         start_logits = self.start_projection(X).squeeze(-1)
         start_logits[:, 0] = -float("inf")
-        
 
         # Squeeze final singleton dimensions
         if len(start_position.size()) > 1:
@@ -375,7 +374,6 @@ class QuestionAnsweringHead(PredictionHead):
 
         answerable_loss_fct = BCEWithLogitsLoss(reduction="none")
         answerable_loss = answerable_loss_fct(answerable_logits, (start_position == 0).float())
-
 
         loss_fct = CrossEntropyLoss(reduction="none")
         start_loss = loss_fct(start_p, start_position)
@@ -447,10 +445,7 @@ class QuestionAnsweringHead(PredictionHead):
         start_logits[:, 0] = -float("inf")
         start_p = torch.softmax(start_logits, dim=-1).squeeze(-1)
 
-
-        start_top_log_probs, start_top_index = torch.topk(
-                start_p, 20, dim=-1
-            )
+        start_top_log_probs, start_top_index = torch.topk(start_p, 20, dim=-1)
         start_top_index_exp = start_top_index.unsqueeze(-1).expand(-1, -1, X.size(-1))
         start_reprs = torch.gather(X, -2, start_top_index_exp)
         start_reprs = start_reprs.unsqueeze(1).expand(-1, X.size(1), -1, -1)
@@ -469,15 +464,21 @@ class QuestionAnsweringHead(PredictionHead):
         final_repr = F.gelu(self.final_answerable_projection(final_repr))
         answerable_logits = self.answerable_projection(final_repr).squeeze(-1)
 
-        end_top_log_probs, end_top_index = torch.topk(
-                end_p, 20, dim=-1
-            )
+        end_top_log_probs, end_top_index = torch.topk(end_p, 20, dim=-1)
         end_top_log_probs = end_top_log_probs.view(-1, 20 * 20)
         end_top_index = end_top_index.view(-1, 20 * 20)
 
         all_top_n = []
 
-        for i, (end_probs, end_indices, start_probs, start_indices, answerable_logit) in enumerate(zip(end_top_log_probs.cpu().numpy(), end_top_index.cpu().numpy(), start_top_log_probs.cpu().numpy(), start_top_index.cpu().numpy(), answerable_logits.cpu().numpy())):
+        for i, (end_probs, end_indices, start_probs, start_indices, answerable_logit) in enumerate(
+            zip(
+                end_top_log_probs.cpu().numpy(),
+                end_top_index.cpu().numpy(),
+                start_top_log_probs.cpu().numpy(),
+                start_top_index.cpu().numpy(),
+                answerable_logits.cpu().numpy(),
+            )
+        ):
             candidates = []
             for end_prob, end_index in zip(end_probs, end_indices):
                 for start_prob, start_index in zip(start_probs, start_indices):
@@ -489,30 +490,33 @@ class QuestionAnsweringHead(PredictionHead):
                         continue
                     score = start_prob + end_prob
                     score = score
-                    candidates.append(QACandidate(
-                        offset_answer_start=token_start,
-                        offset_answer_end=token_end,
-                        score=score,
-                        answer_type="span",
-                        offset_unit="token",
-                        aggregation_level="passage",
-                        passage_id=str(i),
-                        confidence=score,
-                    ))
+                    candidates.append(
+                        QACandidate(
+                            offset_answer_start=token_start,
+                            offset_answer_end=token_end,
+                            score=score,
+                            answer_type="span",
+                            offset_unit="token",
+                            aggregation_level="passage",
+                            passage_id=str(i),
+                            confidence=score,
+                        )
+                    )
             score = answerable_logit
             candidates = sorted(candidates, key=lambda x: x.score, reverse=True)[:19]
-            candidates.append(QACandidate(
-                offset_answer_start=0,
-                offset_answer_end=0,
-                score=score,
-                answer_type="no_answer",
-                offset_unit="token",
-                aggregation_level="passage",
-                passage_id=None,
-                confidence=score,
-            ))
+            candidates.append(
+                QACandidate(
+                    offset_answer_start=0,
+                    offset_answer_end=0,
+                    score=score,
+                    answer_type="no_answer",
+                    offset_unit="token",
+                    aggregation_level="passage",
+                    passage_id=None,
+                    confidence=score,
+                )
+            )
             all_top_n.append(candidates)
-
 
         return all_top_n
 
