@@ -2,13 +2,15 @@ import json
 import logging
 import os
 from pathlib import Path
+from re import I
 from typing import List, Tuple, Optional, Union, Dict
 
 import numpy as np
 import torch
 from torch import nn
 from torch import optim
-from torch.nn import CrossEntropyLoss, NLLLoss
+from torch.nn import CrossEntropyLoss, NLLLoss, BCEWithLogitsLoss
+from torch.nn import functional as F
 from transformers import AutoModelForQuestionAnswering
 from scipy.special import expit
 
@@ -264,7 +266,11 @@ class QuestionAnsweringHead(PredictionHead):
             )
         self.layer_dims = layer_dims
         assert self.layer_dims[-1] == 2
-        self.feed_forward = FeedForwardBlock(self.layer_dims)
+        self.start_projection = nn.Linear(self.layer_dims[0], 1)
+        self.final_projection = nn.Linear(self.layer_dims[0] * 2, 512)
+        self.end_projection = nn.Linear(512, 1)
+        self.final_answerable_projection = nn.Linear(self.layer_dims[0] * 2, 512)
+        self.answerable_projection = nn.Linear(512, 1)
         logger.debug(f"Prediction head initialized with size {self.layer_dims}")
         self.num_labels = self.layer_dims[-1]
         self.ph_output_type = "per_token_squad"
@@ -319,7 +325,7 @@ class QuestionAnsweringHead(PredictionHead):
             # init empty head
             head = cls(layer_dims=[full_qa_model.config.hidden_size, 2], task_name="question_answering")
             # transfer weights for head from full model
-            head.feed_forward.feed_forward[0].load_state_dict(full_qa_model.qa_outputs.state_dict())
+            #head.feed_forward.feed_forward[0].load_state_dict(full_qa_model.qa_outputs.state_dict())
             del full_qa_model
 
         return head
@@ -328,8 +334,9 @@ class QuestionAnsweringHead(PredictionHead):
         """
         One forward pass through the prediction head model, starting with language model output on token level.
         """
-        logits = self.feed_forward(X)
-        return self.temperature_scale(logits)
+        return X
+        #logits = self.feed_forward(X)
+        #return self.temperature_scale(logits)
 
     def logits_to_loss(self, logits: torch.Tensor, labels: torch.Tensor, **kwargs):
         """
@@ -338,13 +345,14 @@ class QuestionAnsweringHead(PredictionHead):
         # todo explain how we only use first answer for train
         # labels.shape =  [batch_size, n_max_answers, 2]. n_max_answers is by default 6 since this is the
         # most that occurs in the SQuAD dev set. The 2 in the final dimension corresponds to [start, end]
+        X = logits
         start_position = labels[:, 0, 0]
         end_position = labels[:, 0, 1]
 
         # logits is of shape [batch_size, max_seq_len, 2]. Like above, the final dimension corresponds to [start, end]
-        start_logits, end_logits = logits.split(1, dim=-1)
-        start_logits = start_logits.squeeze(-1)
-        end_logits = end_logits.squeeze(-1)
+        start_logits = self.start_projection(X).squeeze(-1)
+        start_logits[:, 0] = -float("inf")
+        
 
         # Squeeze final singleton dimensions
         if len(start_position.size()) > 1:
@@ -352,21 +360,27 @@ class QuestionAnsweringHead(PredictionHead):
         if len(end_position.size()) > 1:
             end_position = end_position.squeeze(-1)
 
-        ignored_index = start_logits.size(1)
-        start_position.clamp_(0, ignored_index)
-        end_position.clamp_(0, ignored_index)
+        start_reprs = torch.gather(X, 1, start_position.unsqueeze(-1).unsqueeze(-1).expand(-1, X.size(-2), X.size(-1)))
+        combined_repr = torch.cat([X, start_reprs], dim=-1)
+        combined_repr = F.gelu(self.final_projection(combined_repr))
+        end_logits = self.end_projection(combined_repr).squeeze(-1)
+        end_logits[:, 0] = -float("inf")
 
-        # Workaround for pytorch bug in version 1.10.0 with non-continguous tensors
-        # Fix expected in 1.10.1 based on https://github.com/pytorch/pytorch/pull/64954
-        start_logits = start_logits.contiguous()
-        start_position = start_position.contiguous()
-        end_logits = end_logits.contiguous()
-        end_position = end_position.contiguous()
+        final_repr = X[:, 0]
+        start_p = torch.softmax(start_logits, dim=-1)
+        start_feature = torch.sum(start_p.unsqueeze(-1) * X, dim=-2)
+        final_repr = torch.cat([final_repr, start_feature], dim=-1)
+        final_repr = F.gelu(self.final_answerable_projection(final_repr))
+        answerable_logits = self.answerable_projection(final_repr).squeeze(-1)
+
+        answerable_loss_fct = BCEWithLogitsLoss(reduction="none")
+        answerable_loss = answerable_loss_fct(answerable_logits, (start_position == 0).float())
+
 
         loss_fct = CrossEntropyLoss(reduction="none")
-        start_loss = loss_fct(start_logits, start_position)
-        end_loss = loss_fct(end_logits, end_position)
-        per_sample_loss = (start_loss + end_loss) / 2
+        start_loss = loss_fct(start_p, start_position)
+        end_loss = loss_fct(end_logits.softmax(dim=-1), end_position)
+        per_sample_loss = (start_loss + end_loss + answerable_loss) / 2
         return per_sample_loss
 
     def temperature_scale(self, logits: torch.Tensor):
@@ -426,74 +440,79 @@ class QuestionAnsweringHead(PredictionHead):
         (i.e. special tokens, question tokens, passage_tokens)
         """
 
-        # Will be populated with the top-n predictions of each sample in the batch
-        # shape = batch_size x ~top_n
-        # Note that ~top_n = n   if no_answer is     within the top_n predictions
-        #           ~top_n = n+1 if no_answer is not within the top_n predictions
+        X = logits
+
+        # logits is of shape [batch_size, max_seq_len, 2]. Like above, the final dimension corresponds to [start, end]
+        start_logits = self.start_projection(X)
+        start_logits[:, 0] = -float("inf")
+        start_p = torch.softmax(start_logits, dim=-1).squeeze(-1)
+
+
+        start_top_log_probs, start_top_index = torch.topk(
+                start_p, 20, dim=-1
+            )
+        start_top_index_exp = start_top_index.unsqueeze(-1).expand(-1, -1, X.size(-1))
+        start_reprs = torch.gather(X, -2, start_top_index_exp)
+        start_reprs = start_reprs.unsqueeze(1).expand(-1, X.size(1), -1, -1)
+        X_ = X.unsqueeze(2).expand_as(start_reprs)
+        X_ = torch.transpose(X_, 1, 2)
+        start_reprs = torch.transpose(start_reprs, 1, 2)
+        combined_repr = torch.cat([X_, start_reprs], dim=-1)
+        combined_repr = F.gelu(self.final_projection(combined_repr))
+        end_logits = self.end_projection(combined_repr).squeeze(-1)
+        end_logits[:, 0] = -float("inf")
+        end_p = torch.softmax(end_logits, dim=-1)
+
+        final_repr = X[:, 0]
+        start_feature = torch.sum(start_p.unsqueeze(-1) * X, dim=-2)
+        final_repr = torch.cat([final_repr, start_feature], dim=-1)
+        final_repr = F.gelu(self.final_answerable_projection(final_repr))
+        answerable_logits = self.answerable_projection(final_repr).squeeze(-1)
+
+        end_top_log_probs, end_top_index = torch.topk(
+                end_p, 20, dim=-1
+            )
+        end_top_log_probs = end_top_log_probs.view(-1, 20 * 20)
+        end_top_index = end_top_index.view(-1, 20 * 20)
+
         all_top_n = []
 
-        # logits is of shape [batch_size, max_seq_len, 2]. The final dimension corresponds to [start, end]
-        start_logits, end_logits = logits.split(1, dim=-1)
-        start_logits = start_logits.squeeze(-1)
-        end_logits = end_logits.squeeze(-1)
+        for i, (end_probs, end_indices, start_probs, start_indices, answerable_logit) in enumerate(zip(end_top_log_probs.cpu().numpy(), end_top_index.cpu().numpy(), start_top_log_probs.cpu().numpy(), start_top_index.cpu().numpy(), answerable_logits.cpu().numpy())):
+            candidates = []
+            for end_prob, end_index in zip(end_probs, end_indices):
+                for start_prob, start_index in zip(start_probs, start_indices):
+                    token_start = start_index
+                    token_end = end_index
+                    if token_end == 0:
+                        continue
+                    if token_start > token_end:
+                        continue
+                    score = start_prob + end_prob
+                    score = score
+                    candidates.append(QACandidate(
+                        offset_answer_start=token_start,
+                        offset_answer_end=token_end,
+                        score=score,
+                        answer_type="span",
+                        offset_unit="token",
+                        aggregation_level="passage",
+                        passage_id=str(i),
+                        confidence=score,
+                    ))
+            score = answerable_logit
+            candidates = sorted(candidates, key=lambda x: x.score, reverse=True)[:19]
+            candidates.append(QACandidate(
+                offset_answer_start=0,
+                offset_answer_end=0,
+                score=score,
+                answer_type="no_answer",
+                offset_unit="token",
+                aggregation_level="passage",
+                passage_id=None,
+                confidence=score,
+            ))
+            all_top_n.append(candidates)
 
-        # Calculate a few useful variables
-        batch_size = start_logits.size()[0]
-        max_seq_len = start_logits.shape[1]  # target dim
-
-        # get scores for all combinations of start and end logits => candidate answers
-        start_matrix = start_logits.unsqueeze(2).expand(-1, -1, max_seq_len)
-        end_matrix = end_logits.unsqueeze(1).expand(-1, max_seq_len, -1)
-        start_end_matrix = start_matrix + end_matrix
-
-        # disqualify answers where end < start
-        # (set the lower triangular matrix to low value, excluding diagonal)
-        indices = torch.tril_indices(max_seq_len, max_seq_len, offset=-1, device=start_end_matrix.device)
-        start_end_matrix[:, indices[0][:], indices[1][:]] = -888
-
-        # disqualify answers where answer span is greater than max_answer_length
-        # (set the upper triangular matrix to low value, excluding diagonal)
-        indices_long_span = torch.triu_indices(
-            max_seq_len, max_seq_len, offset=max_answer_length, device=start_end_matrix.device
-        )
-        start_end_matrix[:, indices_long_span[0][:], indices_long_span[1][:]] = -777
-
-        # disqualify answers where start=0, but end != 0
-        start_end_matrix[:, 0, 1:] = -666
-
-        # Turn 1d span_mask vectors into 2d span_mask along 2 different axes
-        # span mask has:
-        #   0 for every position that is never a valid start or end index (question tokens, mid and end special tokens, padding)
-        #   1 everywhere else
-        span_mask_start = span_mask.unsqueeze(2).expand(-1, -1, max_seq_len)
-        span_mask_end = span_mask.unsqueeze(1).expand(-1, max_seq_len, -1)
-        span_mask_2d = span_mask_start + span_mask_end
-        # disqualify spans where either start or end is on an invalid token
-        invalid_indices = torch.nonzero((span_mask_2d != 2), as_tuple=True)
-        start_end_matrix[invalid_indices[0][:], invalid_indices[1][:], invalid_indices[2][:]] = -999
-
-        # Sort the candidate answers by their score. Sorting happens on the flattened matrix.
-        # flat_sorted_indices.shape: (batch_size, max_seq_len^2, 1)
-        flat_scores = start_end_matrix.view(batch_size, -1)
-        flat_sorted_indices_2d = flat_scores.sort(descending=True)[1]
-        flat_sorted_indices = flat_sorted_indices_2d.unsqueeze(2)
-
-        # The returned indices are then converted back to the original dimensionality of the matrix.
-        # sorted_candidates.shape : (batch_size, max_seq_len^2, 2)
-        start_indices = flat_sorted_indices // max_seq_len
-        end_indices = flat_sorted_indices % max_seq_len
-        sorted_candidates = torch.cat((start_indices, end_indices), dim=2)
-
-        # Get the n_best candidate answers for each sample
-        for sample_idx in range(batch_size):
-            sample_top_n = self.get_top_candidates(
-                sorted_candidates[sample_idx],
-                start_end_matrix[sample_idx],
-                sample_idx,
-                start_matrix=start_matrix[sample_idx],
-                end_matrix=end_matrix[sample_idx],
-            )
-            all_top_n.append(sample_top_n)
 
         return all_top_n
 
