@@ -4,6 +4,7 @@ import os
 from copy import deepcopy
 from pathlib import Path
 from textwrap import dedent
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,6 +14,7 @@ from haystack.document_stores import BaseDocumentStore
 from haystack.schema import Label
 
 from rest_api.utils import get_app, get_pipelines
+from rest_api.controller.search import _process_request
 
 
 FEEDBACK = {
@@ -431,3 +433,14 @@ def test_get_feedback_malformed_query(populated_client_with_feedback: TestClient
     feedback["unexpected_field"] = "misplaced-value"
     response = populated_client_with_feedback.post(url="/feedback", json=feedback)
     assert response.status_code == 422
+
+
+def test__process_request_bool_in_params():
+    """
+    Ensure items of params can be other types than dictionary, see
+    https://github.com/deepset-ai/haystack/issues/2656
+    """
+    pipeline = MagicMock()
+    request = MagicMock()
+    request.params = {"debug": True, "Retriever": {"top_k": 5}, "Reader": {"top_k": 3}}
+    _process_request(pipeline, request)
